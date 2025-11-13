@@ -41,8 +41,105 @@ st.markdown("""
         border-radius: 10px;
         padding: 10px;
     }
+    .attack-box {
+        padding: 20px;
+        border-radius: 10px;
+        margin: 10px 0;
+        border-left: 5px solid;
+    }
+    .constant-jamming {
+        background-color: #2d1f1f;
+        border-left-color: #e74c3c;
+    }
+    .random-jamming {
+        background-color: #2d291f;
+        border-left-color: #f39c12;
+    }
+    .reactive-jamming {
+        background-color: #1f1f2d;
+        border-left-color: #9b59b6;
+    }
+    .no-jammer {
+        background-color: #1f2d1f;
+        border-left-color: #2ecc71;
+    }
     </style>
 """, unsafe_allow_html=True)
+
+
+# =================== HELPER FUNCTION FOR REAL METRICS ===================
+
+def extract_real_metrics_from_sample(sample, feature_names):
+    """
+    Extract real network metrics from CSV sample features.
+    Calculates PDR, SNR, latency, throughput from actual data.
+    """
+    metrics = {
+        'pdr': 0.95,
+        'snr': 25.0,
+        'latency': 50.0,
+        'throughput': 800.0
+    }
+    
+    try:
+        # 1. Extract SNR from SINR
+        if 'sinr_per_antenna_1' in feature_names:
+            snr_idx = feature_names.index('sinr_per_antenna_1')
+            metrics['snr'] = float(sample[snr_idx])
+        elif 'per_antenna_avg_rssi_rx_data_frames_1' in feature_names and 'per_antenna_noise_floor_1' in feature_names:
+            rssi_idx = feature_names.index('per_antenna_avg_rssi_rx_data_frames_1')
+            noise_idx = feature_names.index('per_antenna_noise_floor_1')
+            rssi = float(sample[rssi_idx])
+            noise = float(sample[noise_idx])
+            metrics['snr'] = abs(rssi - noise)
+        
+        # 2. Calculate PDR (Packet Delivery Ratio)
+        if 'rx_data_pkts' in feature_names and 'tx_total_pkts' in feature_names:
+            rx_idx = feature_names.index('rx_data_pkts')
+            tx_idx = feature_names.index('tx_total_pkts')
+            tx_total = float(sample[tx_idx])
+            rx_total = float(sample[rx_idx])
+            
+            if tx_total > 0:
+                pdr = rx_total / tx_total
+                metrics['pdr'] = min(1.0, max(0.0, pdr))
+            else:
+                metrics['pdr'] = 0.0
+        
+        # 3. Estimate Latency from retry metrics
+        if 'tx_pkts_retries' in feature_names:
+            retries_idx = feature_names.index('tx_pkts_retries')
+            retries = float(sample[retries_idx])
+            estimated_latency = 20.0 + (retries / 10.0)
+            metrics['latency'] = min(200.0, max(20.0, estimated_latency))
+        
+        # 4. Estimate Throughput from bytes/packets ratio
+        if 'rx_data_bytes' in feature_names and 'rx_data_pkts' in feature_names:
+            bytes_idx = feature_names.index('rx_data_bytes')
+            pkts_idx = feature_names.index('rx_data_pkts')
+            rx_pkts = float(sample[pkts_idx])
+            
+            if rx_pkts > 0:
+                rx_bytes = float(sample[bytes_idx])
+                avg_packet_size = rx_bytes / rx_pkts
+                estimated_throughput = (avg_packet_size * 8) / 1000
+                metrics['throughput'] = min(1000.0, max(100.0, estimated_throughput))
+            else:
+                metrics['throughput'] = 100.0
+        
+        # 5. Adjust based on failures
+        if 'tx_failures' in feature_names:
+            failures_idx = feature_names.index('tx_failures')
+            failures = float(sample[failures_idx])
+            
+            if failures > 100:
+                metrics['latency'] = min(200.0, metrics['latency'] * 1.5)
+                metrics['throughput'] = max(100.0, metrics['throughput'] * 0.7)
+    
+    except Exception as e:
+        print(f"⚠️ Warning: Error extracting metrics: {e}")
+    
+    return metrics
 
 
 # =================== DEFENSE CLASSES ===================
@@ -401,97 +498,6 @@ class JamShieldPipeline:
             'security_score': self.ids.get_security_score(),
             'encrypted_packets': self.encryption.encrypted_packets
         }
-# =================== HELPER FUNCTION (Add at top after imports) ===================
-
-def extract_real_metrics_from_sample(sample, feature_names):
-    """
-    Extract real network metrics from CSV sample features.
-    Calculates PDR, SNR, latency, throughput from actual data.
-    
-    Args:
-        sample: NumPy array of feature values
-        feature_names: List of feature column names
-    
-    Returns:
-        dict: Real network metrics {pdr, snr, latency, throughput}
-    """
-    # Initialize with safe defaults
-    metrics = {
-        'pdr': 0.95,
-        'snr': 25.0,
-        'latency': 50.0,
-        'throughput': 800.0
-    }
-    
-    try:
-        # 1. Extract SNR from SINR (Signal-to-Interference-plus-Noise Ratio)
-        if 'sinr_per_antenna_1' in feature_names:
-            snr_idx = feature_names.index('sinr_per_antenna_1')
-            metrics['snr'] = float(sample[snr_idx])
-        elif 'per_antenna_avg_rssi_rx_data_frames_1' in feature_names:
-            # Alternative: Use RSSI if SINR not available
-            rssi_idx = feature_names.index('per_antenna_avg_rssi_rx_data_frames_1')
-            noise_idx = feature_names.index('per_antenna_noise_floor_1')
-            rssi = float(sample[rssi_idx])
-            noise = float(sample[noise_idx])
-            metrics['snr'] = abs(rssi - noise)  # Calculate SNR from RSSI and noise floor
-        
-        # 2. Calculate PDR (Packet Delivery Ratio)
-        if 'rx_data_pkts' in feature_names and 'tx_total_pkts' in feature_names:
-            rx_idx = feature_names.index('rx_data_pkts')
-            tx_idx = feature_names.index('tx_total_pkts')
-            
-            tx_total = float(sample[tx_idx])
-            rx_total = float(sample[rx_idx])
-            
-            if tx_total > 0:
-                pdr = rx_total / tx_total
-                metrics['pdr'] = min(1.0, max(0.0, pdr))  # Clamp between 0 and 1
-            else:
-                metrics['pdr'] = 0.0
-        
-        # 3. Estimate Latency from retry metrics
-        if 'tx_pkts_retries' in feature_names:
-            retries_idx = feature_names.index('tx_pkts_retries')
-            retries = float(sample[retries_idx])
-            
-            # Base latency 20ms + penalty for each retry (10 retries = +1ms)
-            estimated_latency = 20.0 + (retries / 10.0)
-            metrics['latency'] = min(200.0, max(20.0, estimated_latency))
-        
-        # 4. Estimate Throughput from received data
-        if 'rx_data_bytes' in feature_names and 'rx_data_pkts' in feature_names:
-            bytes_idx = feature_names.index('rx_data_bytes')
-            pkts_idx = feature_names.index('rx_data_pkts')
-            
-            rx_pkts = float(sample[pkts_idx])
-            
-            if rx_pkts > 0:
-                rx_bytes = float(sample[bytes_idx])
-                avg_packet_size = rx_bytes / rx_pkts
-                
-                # Estimate throughput (simplified calculation)
-                # Average packet size * 8 (bits) / 1000 (Kbps to Mbps)
-                estimated_throughput = (avg_packet_size * 8) / 1000
-                metrics['throughput'] = min(1000.0, max(100.0, estimated_throughput))
-            else:
-                metrics['throughput'] = 100.0  # Minimal throughput if no packets
-        
-        # 5. Additional adjustment based on failures
-        if 'tx_failures' in feature_names:
-            failures_idx = feature_names.index('tx_failures')
-            failures = float(sample[failures_idx])
-            
-            # High failures indicate poor conditions
-            if failures > 100:
-                metrics['latency'] = min(200.0, metrics['latency'] * 1.5)
-                metrics['throughput'] = max(100.0, metrics['throughput'] * 0.7)
-    
-    except Exception as e:
-        print(f"⚠️ Warning: Error extracting metrics, using defaults: {e}")
-        # Return defaults if extraction fails
-    
-    return metrics
 
 
 # =================== STREAMLIT APP ===================
@@ -1089,113 +1095,59 @@ def main():
             st.plotly_chart(fig_score, use_container_width=True)
     
     # =================== LIVE SIMULATION ===================
-    elif page == "📈 Live Simulation":
-        st.header("📈 Complete System Live Simulation")
-        st.markdown("### Real-time jamming detection with actual network metrics from CSV data")
+    # =================== LIVE SIMULATION ===================
+    elif page == "Live Simulation":
+        st.header("📈 Live Simulation with Real Data")
+        st.markdown("### *Using real PDR, SNR, latency, throughput from CSV files*")
         st.markdown("---")
         
-        # Check if model is trained
         if not st.session_state.trained:
-            st.warning("⚠️ Please train the model first in the 'ML Training' page!")
-            st.info("👉 Go to **ML Training** → Upload dataset → Click **Train Model**")
+            st.warning("⚠️ Please train the model first!")
+            st.info("👉 Go to **ML Training** → Enter dataset path → Click **Train Model**")
             return
         
-        # Configuration controls
         col1, col2 = st.columns(2)
         
         with col1:
-            num_samples = st.slider(
-                "Number of samples to simulate", 
-                min_value=5, 
-                max_value=30, 
-                value=10,
-                help="Select how many network samples to process"
-            )
+            num_samples = st.slider("Number of samples", 5, 30, 10)
         
         with col2:
-            simulation_speed = st.slider(
-                "Simulation speed (seconds per sample)", 
-                min_value=0.3, 
-                max_value=2.0, 
-                value=0.7,
-                step=0.1,
-                help="Control how fast the simulation runs"
-            )
+            simulation_speed = st.slider("Speed (seconds/sample)", 0.3, 2.0, 0.7, 0.1)
         
-        # Advanced options
-        with st.expander("⚙️ Advanced Options"):
-            col_a, col_b = st.columns(2)
-            
-            with col_a:
-                use_random_sampling = st.checkbox(
-                    "Use random sampling", 
-                    value=True,
-                    help="Randomly select samples to show variety of attack types"
-                )
-            
-            with col_b:
-                show_metrics_detail = st.checkbox(
-                    "Show detailed metrics", 
-                    value=True,
-                    help="Display extracted PDR, SNR values for each sample"
-                )
+        use_random = st.checkbox("Use random sampling (diverse attacks)", value=True)
         
-        st.markdown("---")
-        
-        # Start simulation button
         if st.button("▶️ Start Live Simulation", type="primary", use_container_width=True):
             
-            # Retrieve trained model and test data
             pipeline = st.session_state.pipeline
             X_test = st.session_state.X_test
             y_test = st.session_state.y_test
             
-            # Create dynamic UI placeholders
             progress_bar = st.progress(0)
             status_text = st.empty()
             metrics_placeholder = st.empty()
             chart_placeholder = st.empty()
             actions_placeholder = st.empty()
             
-            # Storage for detection history
             detection_history = []
             
-            # Determine which samples to process
-            if use_random_sampling:
-                # Random sampling for variety
-                sample_indices = np.random.choice(
-                    len(X_test), 
-                    size=min(num_samples, len(X_test)), 
-                    replace=False
-                )
-                st.info(f"🎲 Using random sampling from {len(X_test)} test samples")
+            if use_random:
+                indices = np.random.choice(len(X_test), min(num_samples, len(X_test)), replace=False)
             else:
-                # Sequential sampling
-                sample_indices = range(min(num_samples, len(X_test)))
-                st.info(f"📊 Processing first {num_samples} samples sequentially")
+                indices = range(min(num_samples, len(X_test)))
             
-            time.sleep(0.5)  # Brief pause before starting
-            
-            # Main simulation loop
-            for iteration, sample_idx in enumerate(sample_indices):
+            for idx, i in enumerate(indices):
+                sample = X_test[i]
+                true_label = pipeline.label_encoder.inverse_transform([y_test[i]])[0]
                 
-                # Get sample and ground truth
-                sample = X_test[sample_idx]
-                true_label = pipeline.label_encoder.inverse_transform([y_test[sample_idx]])[0]
-                
-                # Extract REAL metrics from CSV sample
+                # Extract REAL metrics from CSV
                 real_metrics = extract_real_metrics_from_sample(sample, pipeline.feature_names)
                 
-                # Update status
-                status_text.info(f"⏳ Processing sample {iteration+1}/{num_samples} (Index: {sample_idx})...")
+                status_text.info(f"⏳ Processing sample {idx+1}/{num_samples}...")
                 
-                # Run complete detection and response pipeline
                 result = pipeline.detect_and_respond(sample, real_metrics)
                 
-                # Store results
                 detection_history.append({
-                    'Sample': iteration + 1,
-                    'Index': sample_idx,
+                    'Sample': idx + 1,
                     'Jamming Type': result['jamming_type'],
                     'True Label': true_label,
                     'Confidence': result['confidence'],
@@ -1207,292 +1159,84 @@ def main():
                     'Match': result['jamming_type'] == true_label
                 })
                 
-                # ============= UPDATE DASHBOARD =============
-                
-                # 1. Update Metrics Cards
                 with metrics_placeholder.container():
                     metric_cols = st.columns(5)
                     
-                    with metric_cols[0]:
-                        st.metric(
-                            "📊 Sample", 
-                            f"{iteration+1}/{num_samples}",
-                            delta=f"Index: {sample_idx}"
-                        )
+                    metric_cols[0].metric("📊 Sample", f"{idx+1}/{num_samples}")
+                    metric_cols[1].metric("🎯 Detected", result['jamming_type'])
+                    metric_cols[2].metric("🔍 Confidence", f"{result['confidence']*100:.1f}%")
+                    metric_cols[3].metric("🛡️ Security", f"{result['security_score']}/100")
+                    metric_cols[4].metric("✓ Match", "✅" if result['jamming_type'] == true_label else "❌")
                     
-                    with metric_cols[1]:
-                        st.metric(
-                            "🎯 Detected", 
-                            result['jamming_type'],
-                            delta="ML Prediction"
-                        )
+                    st.caption(f"📡 **Real Metrics:** PDR={real_metrics['pdr']:.4f} | SNR={real_metrics['snr']:.1f}dB | Latency={real_metrics['latency']:.1f}ms | Throughput={real_metrics['throughput']:.0f}Mbps")
                     
-                    with metric_cols[2]:
-                        st.metric(
-                            "🔍 Confidence", 
-                            f"{result['confidence']*100:.1f}%",
-                            delta=f"{'High' if result['confidence'] > 0.9 else 'Medium' if result['confidence'] > 0.8 else 'Low'}"
-                        )
-                    
-                    with metric_cols[3]:
-                        st.metric(
-                            "🛡️ Security", 
-                            f"{result['security_score']}/100",
-                            delta=f"{'Good' if result['security_score'] > 90 else 'Fair' if result['security_score'] > 70 else 'Alert'}"
-                        )
-                    
-                    with metric_cols[4]:
-                        match_status = result['jamming_type'] == true_label
-                        st.metric(
-                            "✓ Accuracy",
-                            "✅ Correct" if match_status else "❌ Wrong",
-                            delta=f"True: {true_label}"
-                        )
-                    
-                    # Show detailed metrics if enabled
-                    if show_metrics_detail:
-                        st.markdown("---")
-                        st.caption(f"""
-                        **📡 Real Network Metrics (from CSV):**  
-                        PDR: {real_metrics['pdr']:.4f} ({real_metrics['pdr']*100:.2f}%) | 
-                        SNR: {real_metrics['snr']:.1f} dB | 
-                        Latency: {real_metrics['latency']:.1f} ms | 
-                        Throughput: {real_metrics['throughput']:.0f} Mbps
-                        """)
-                    
-                    # Show prediction mismatch warning
-                    if not match_status:
-                        st.warning(f"⚠️ **Mismatch Detected!** ML predicted '{result['jamming_type']}' but ground truth is '{true_label}'")
+                    if result['jamming_type'] != true_label:
+                        st.warning(f"⚠️ Mismatch: Predicted '{result['jamming_type']}' but actual is '{true_label}'")
                 
-                # 2. Update Live Charts
                 with chart_placeholder.container():
                     df_hist = pd.DataFrame(detection_history)
                     
-                    # Create 2-panel chart
-                    fig = make_subplots(
-                        rows=1, cols=2,
-                        subplot_titles=("Detection Confidence Over Time", "Security Score Trend"),
-                        specs=[[{"secondary_y": False}, {"secondary_y": False}]]
-                    )
+                    fig = make_subplots(rows=1, cols=2, subplot_titles=("Confidence", "Security Score"))
                     
-                    # Left panel: Confidence with color coding
                     colors = ['green' if m else 'red' for m in df_hist['Match']]
                     
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df_hist['Sample'],
-                            y=df_hist['Confidence'],
-                            mode='lines+markers',
-                            name='Confidence',
-                            line=dict(color='#3498db', width=3),
-                            marker=dict(
-                                size=10,
-                                color=colors,
-                                line=dict(color='white', width=2)
-                            ),
-                            hovertemplate='<b>Sample %{x}</b><br>Confidence: %{y:.1%}<extra></extra>'
-                        ),
-                        row=1, col=1
-                    )
+                    fig.add_trace(go.Scatter(
+                        x=df_hist['Sample'],
+                        y=df_hist['Confidence'],
+                        mode='lines+markers',
+                        line=dict(color='#3498db', width=3),
+                        marker=dict(size=10, color=colors, line=dict(color='white', width=2))
+                    ), row=1, col=1)
                     
-                    # Add confidence threshold line
-                    fig.add_hline(y=0.8, line_dash="dash", line_color="orange", 
-                                annotation_text="80% Threshold", row=1, col=1)
+                    fig.add_trace(go.Scatter(
+                        x=df_hist['Sample'],
+                        y=df_hist['Security Score'],
+                        mode='lines+markers',
+                        line=dict(color='#2ecc71', width=3),
+                        marker=dict(size=10),
+                        fill='tozeroy'
+                    ), row=1, col=2)
                     
-                    # Right panel: Security Score
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df_hist['Sample'],
-                            y=df_hist['Security Score'],
-                            mode='lines+markers',
-                            name='Security',
-                            line=dict(color='#2ecc71', width=3),
-                            marker=dict(size=10),
-                            fill='tozeroy',
-                            fillcolor='rgba(46, 204, 113, 0.2)',
-                            hovertemplate='<b>Sample %{x}</b><br>Security: %{y}/100<extra></extra>'
-                        ),
-                        row=1, col=2
-                    )
-                    
-                    # Add security threshold line
-                    fig.add_hline(y=80, line_dash="dash", line_color="red", 
-                                annotation_text="80/100 Minimum", row=1, col=2)
-                    
-                    # Update layout
-                    fig.update_xaxes(title_text="Sample Number", row=1, col=1)
-                    fig.update_xaxes(title_text="Sample Number", row=1, col=2)
-                    fig.update_yaxes(title_text="Confidence", range=[0, 1], row=1, col=1)
-                    fig.update_yaxes(title_text="Score", range=[0, 100], row=1, col=2)
-                    
-                    fig.update_layout(
-                        height=400,
-                        showlegend=False,
-                        hovermode='x unified'
-                    )
-                    
+                    fig.update_layout(height=350, showlegend=False)
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # 3. Update Countermeasures Actions
                 with actions_placeholder.container():
-                    action_cols = st.columns([3, 1])
+                    col_a, col_b = st.columns([3, 1])
                     
-                    with action_cols[0]:
+                    with col_a:
                         st.subheader("🛡️ Active Countermeasures")
                         for action in result['actions']:
                             st.success(f"✅ {action}")
                     
-                    with action_cols[1]:
+                    with col_b:
                         st.subheader("📋 Ground Truth")
-                        st.info(f"**Actual Attack:**\n\n{true_label}")
-                        
-                        if result.get('anomalies'):
-                            st.warning(f"**IDS Alerts:**\n\n{len(result['anomalies'])} anomalies")
+                        st.info(f"**Actual:**\n\n{true_label}")
                 
-                # 4. Update Progress Bar
-                progress_percentage = (iteration + 1) / num_samples
-                progress_bar.progress(progress_percentage)
-                
-                # 5. Simulate real-time delay
+                progress_bar.progress((idx+1)/num_samples)
                 time.sleep(simulation_speed)
             
-            # ============= SIMULATION COMPLETE =============
-            
-            status_text.empty()  # Clear status
+            status_text.empty()
             st.balloons()
             st.success("🎉 **Simulation Complete!**")
             
-            # Final Statistics Dashboard
             st.markdown("---")
-            st.header("📊 Simulation Results Summary")
+            st.header("📊 Results Summary")
             
             df_final = pd.DataFrame(detection_history)
             
-            # Summary Metrics
-            summary_cols = st.columns(5)
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("📊 Samples", len(df_final))
+            col2.metric("⚡ Avg Confidence", f"{df_final['Confidence'].mean()*100:.1f}%")
+            col3.metric("🎯 Accuracy", f"{(df_final['Match'].sum()/len(df_final))*100:.1f}%")
+            col4.metric("🛡️ Avg Security", f"{df_final['Security Score'].mean():.1f}/100")
+            col5.metric("📡 Avg PDR", f"{df_final['PDR'].mean()*100:.1f}%")
             
-            with summary_cols[0]:
-                st.metric("📊 Total Samples", len(df_final))
+            st.subheader("📋 Detailed Results")
+            st.dataframe(df_final, use_container_width=True, height=400)
             
-            with summary_cols[1]:
-                avg_confidence = df_final['Confidence'].mean()
-                st.metric("⚡ Avg Confidence", f"{avg_confidence*100:.1f}%")
-            
-            with summary_cols[2]:
-                avg_security = df_final['Security Score'].mean()
-                st.metric("🛡️ Avg Security", f"{avg_security:.1f}/100")
-            
-            with summary_cols[3]:
-                detection_accuracy = (df_final['Match'].sum() / len(df_final)) * 100
-                st.metric("🎯 Detection Accuracy", f"{detection_accuracy:.1f}%")
-            
-            with summary_cols[4]:
-                avg_pdr = df_final['PDR'].mean()
-                st.metric("📡 Avg PDR", f"{avg_pdr*100:.1f}%")
-            
-            st.markdown("---")
-            
-            # Attack Distribution Comparison
-            dist_cols = st.columns(2)
-            
-            with dist_cols[0]:
-                st.subheader("🎯 Detected Attack Types")
-                fig_detected = px.pie(
-                    df_final,
-                    names='Jamming Type',
-                    title="ML Model Predictions",
-                    color_discrete_sequence=['#2ecc71', '#e74c3c', '#f39c12', '#9b59b6'],
-                    hole=0.3
-                )
-                fig_detected.update_traces(textposition='inside', textinfo='percent+label')
-                fig_detected.update_layout(height=400)
-                st.plotly_chart(fig_detected, use_container_width=True)
-            
-            with dist_cols[1]:
-                st.subheader("✅ True Attack Types")
-                fig_true = px.pie(
-                    df_final,
-                    names='True Label',
-                    title="Ground Truth Distribution",
-                    color_discrete_sequence=['#2ecc71', '#e74c3c', '#f39c12', '#9b59b6'],
-                    hole=0.3
-                )
-                fig_true.update_traces(textposition='inside', textinfo='percent+label')
-                fig_true.update_layout(height=400)
-                st.plotly_chart(fig_true, use_container_width=True)
-            
-            # Network Metrics Distribution
-            st.markdown("---")
-            st.subheader("📊 Network Metrics Analysis")
-            
-            metrics_fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=("PDR Distribution", "SNR Distribution", 
-                            "Latency Distribution", "Throughput Distribution")
-            )
-            
-            # PDR histogram
-            metrics_fig.add_trace(
-                go.Histogram(x=df_final['PDR'], nbinsx=20, name='PDR', 
-                            marker_color='#3498db'),
-                row=1, col=1
-            )
-            
-            # SNR histogram
-            metrics_fig.add_trace(
-                go.Histogram(x=df_final['SNR'], nbinsx=20, name='SNR', 
-                            marker_color='#2ecc71'),
-                row=1, col=2
-            )
-            
-            # Latency histogram
-            metrics_fig.add_trace(
-                go.Histogram(x=df_final['Latency'], nbinsx=20, name='Latency', 
-                            marker_color='#f39c12'),
-                row=2, col=1
-            )
-            
-            # Throughput histogram
-            metrics_fig.add_trace(
-                go.Histogram(x=df_final['Throughput'], nbinsx=20, name='Throughput', 
-                            marker_color='#9b59b6'),
-                row=2, col=2
-            )
-            
-            metrics_fig.update_layout(height=500, showlegend=False)
-            metrics_fig.update_xaxes(title_text="PDR", row=1, col=1)
-            metrics_fig.update_xaxes(title_text="SNR (dB)", row=1, col=2)
-            metrics_fig.update_xaxes(title_text="Latency (ms)", row=2, col=1)
-            metrics_fig.update_xaxes(title_text="Throughput (Mbps)", row=2, col=2)
-            
-            st.plotly_chart(metrics_fig, use_container_width=True)
-            
-            # Detailed Results Table
-            st.markdown("---")
-            st.subheader("📋 Detailed Detection Log")
-            
-            # Format dataframe for display
-            display_df = df_final.copy()
-            display_df['Confidence'] = display_df['Confidence'].apply(lambda x: f"{x*100:.1f}%")
-            display_df['PDR'] = display_df['PDR'].apply(lambda x: f"{x:.4f}")
-            display_df['SNR'] = display_df['SNR'].apply(lambda x: f"{x:.1f} dB")
-            display_df['Latency'] = display_df['Latency'].apply(lambda x: f"{x:.1f} ms")
-            display_df['Throughput'] = display_df['Throughput'].apply(lambda x: f"{x:.0f} Mbps")
-            display_df['Match'] = display_df['Match'].apply(lambda x: "✅ Correct" if x else "❌ Wrong")
-            
-            st.dataframe(
-                display_df[[
-                    'Sample', 'Jamming Type', 'True Label', 'Confidence', 
-                    'Security Score', 'PDR', 'SNR', 'Match'
-                ]],
-                use_container_width=True,
-                height=400
-            )
-            
-            # Download results
             csv = df_final.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Download Results as CSV",
+                label="📥 Download Results CSV",
                 data=csv,
                 file_name=f"jamshield_simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
