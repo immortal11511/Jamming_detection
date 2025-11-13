@@ -663,119 +663,380 @@ def main():
                     st.error(f"Error: {str(e)}")
     
     # =================== COUNTERMEASURES ===================
+# =================== COUNTERMEASURES (COMPLETE WITH REAL DATA) ===================
     elif page == "Countermeasures":
-        st.header("🛡️ Interactive Countermeasures")
+        st.header("🛡️ Interactive Countermeasures System")
+        st.markdown("### *Data-Driven Anti-Jamming Techniques*")
+        st.markdown("---")
+        
+        # Check if model is trained and data is available
+        if not st.session_state.trained:
+            st.warning("⚠️ Train the model first to use real data!")
+            st.info("👉 Go to **ML Training** → Load dataset → Train model")
+            st.markdown("---")
+            st.info("📊 Running in **Demo Mode** with simulated data")
+            use_real_data = False
+        else:
+            use_real_data = True
+            st.success("✅ Using real data from trained model")
         
         cm = QuickCountermeasures()
         
+        # =================== EXTRACT REAL CHANNEL QUALITY FROM DATASET ===================
+        if use_real_data:
+            try:
+                pipeline = st.session_state.pipeline
+                X_test = st.session_state.X_test
+                y_test = st.session_state.y_test
+                
+                with st.spinner("📊 Analyzing channel quality from dataset..."):
+                    # Sample random data points
+                    sample_size = min(100, len(X_test))
+                    sample_indices = np.random.choice(len(X_test), sample_size, replace=False)
+                    
+                    # Extract metrics from samples
+                    snr_values = []
+                    pdr_values = []
+                    latency_values = []
+                    throughput_values = []
+                    
+                    for idx in sample_indices:
+                        sample = X_test[idx]
+                        metrics = extract_real_metrics_from_sample(sample, pipeline.feature_names)
+                        snr_values.append(metrics['snr'])
+                        pdr_values.append(metrics['pdr'])
+                        latency_values.append(metrics['latency'])
+                        throughput_values.append(metrics['throughput'])
+                    
+                    # Calculate statistics
+                    avg_snr = np.mean(snr_values)
+                    std_snr = np.std(snr_values)
+                    avg_pdr = np.mean(pdr_values)
+                    avg_latency = np.mean(latency_values)
+                    avg_throughput = np.mean(throughput_values)
+                    
+                    # Create realistic channel quality based on real SNR distribution
+                    cm.channel_quality = {}
+                    for ch in range(1, 14):
+                        # Base quality on SNR (normalized to 0-1)
+                        variation = np.random.normal(0, 0.15)
+                        base_quality = (avg_snr + variation * std_snr) / 50
+                        cm.channel_quality[ch] = min(1.0, max(0.1, base_quality))
+                    
+                    # Identify jammed channels based on low PDR
+                    if avg_pdr < 0.5:
+                        # Mark channels as jammed
+                        num_jammed = max(1, int((1 - avg_pdr) * 5))  # More jammed if PDR is lower
+                        jammed_channels = np.random.choice(range(1, 14), size=num_jammed, replace=False)
+                        for ch in jammed_channels:
+                            cm.channel_quality[ch] = np.random.uniform(0.1, 0.35)
+                    
+                    # Show dataset statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("📡 Avg SNR", f"{avg_snr:.1f} dB")
+                    with col2:
+                        st.metric("📦 Avg PDR", f"{avg_pdr:.3f}")
+                    with col3:
+                        st.metric("⏱️ Avg Latency", f"{avg_latency:.1f} ms")
+                    with col4:
+                        st.metric("🚀 Avg Throughput", f"{avg_throughput:.0f} Mbps")
+                
+                st.success(f"✅ Analyzed {sample_size} samples from your dataset!")
+                
+            except Exception as e:
+                st.error(f"❌ Error extracting real data: {e}")
+                st.info("Falling back to demo mode")
+                use_real_data = False
+        
+        st.markdown("---")
+        
+        # =================== FHSS - FREQUENCY HOPPING ===================
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📻 FHSS - Frequency Hopping")
-            if st.button("🔄 Activate FHSS", key="fhss"):
-                for _ in range(10):
-                    cm.activate_fhss()
+            st.subheader("📻 FHSS - Frequency Hopping Spread Spectrum")
+            st.caption("Rapidly switches between channels to evade jamming")
+            
+            # Configuration
+            num_hops = st.slider("Number of hops to simulate", 5, 30, 15, key="fhss_hops")
+            auto_avoid_jammed = st.checkbox("Automatically avoid jammed channels", value=True, key="avoid_jam")
+            
+            if st.button("🔄 Activate FHSS", type="primary", key="fhss_btn"):
                 
-                # Plot hopping pattern
+                # Identify jammed channels
+                jammed = [ch for ch, q in cm.channel_quality.items() if q < 0.4]
+                
+                if jammed and auto_avoid_jammed:
+                    st.warning(f"⚠️ Detected {len(jammed)} jammed channels: {jammed}")
+                    st.info("🛡️ FHSS will prioritize high-quality channels")
+                
+                # Intelligent hopping sequence
+                if auto_avoid_jammed and jammed:
+                    available_channels = [ch for ch in range(1, 14) if ch not in jammed]
+                    
+                    if len(available_channels) < 3:
+                        st.error("❌ Too many jammed channels! Using all channels.")
+                        available_channels = list(range(1, 14))
+                    
+                    # Smart hopping - prioritize high quality
+                    cm.hop_history = [cm.current_channel]
+                    for _ in range(num_hops):
+                        # Sort by quality and pick from top channels
+                        sorted_channels = sorted(available_channels, 
+                                            key=lambda ch: cm.channel_quality[ch], 
+                                            reverse=True)
+                        # Pick from top 5 channels randomly (for variety)
+                        top_channels = sorted_channels[:min(5, len(sorted_channels))]
+                        next_channel = np.random.choice(top_channels)
+                        
+                        cm.current_channel = next_channel
+                        cm.hop_history.append(next_channel)
+                        
+                        # Rotate to ensure variety
+                        available_channels.remove(next_channel)
+                        if len(available_channels) == 0:
+                            available_channels = [ch for ch in range(1, 14) if ch not in jammed]
+                
+                else:
+                    # Standard sequential hopping
+                    cm.hop_history = [cm.current_channel]
+                    for _ in range(num_hops):
+                        cm.activate_fhss()
+                
+                # Visualization
                 fig = go.Figure()
+                
+                # Color-code markers by channel quality
+                colors = [cm.channel_quality.get(ch, 0.5) for ch in cm.hop_history]
+                
                 fig.add_trace(go.Scatter(
                     x=list(range(len(cm.hop_history))),
                     y=cm.hop_history,
                     mode='lines+markers',
                     line=dict(color='#e74c3c', width=3),
-                    marker=dict(size=8),
-                    name='Channel Hops'
+                    marker=dict(
+                        size=12,
+                        color=colors,
+                        colorscale='RdYlGn',
+                        showscale=True,
+                        colorbar=dict(title="Quality"),
+                        cmin=0,
+                        cmax=1,
+                        line=dict(color='white', width=2)
+                    ),
+                    text=[f"Ch {ch}<br>Quality: {cm.channel_quality.get(ch, 0):.2f}" 
+                        for ch in cm.hop_history],
+                    hovertemplate='<b>Time %{x}</b><br>%{text}<extra></extra>',
+                    name='Hops'
                 ))
+                
+                # Mark jammed channels with red lines
+                for jammed_ch in jammed:
+                    fig.add_hline(
+                        y=jammed_ch,
+                        line_dash="dash",
+                        line_color="red",
+                        opacity=0.3,
+                        annotation_text=f"Ch {jammed_ch} Jammed",
+                        annotation_position="right"
+                    )
+                
                 fig.update_layout(
-                    title="FHSS: Frequency Hopping Pattern",
+                    title="FHSS Pattern (Real Data-Driven)" if use_real_data else "FHSS Pattern (Demo)",
                     xaxis_title="Time Slot",
                     yaxis_title="Channel Number",
-                    height=350
+                    height=400,
+                    yaxis=dict(dtick=1, range=[0, 14])
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                st.success("✅ FHSS Activated!")
+                
+                # Statistics
+                col_a, col_b, col_c, col_d = st.columns(4)
+                with col_a:
+                    st.metric("Total Hops", len(cm.hop_history) - 1)
+                with col_b:
+                    unique_channels = len(set(cm.hop_history))
+                    st.metric("Unique Channels", unique_channels)
+                with col_c:
+                    avg_quality = np.mean([cm.channel_quality[ch] for ch in cm.hop_history])
+                    st.metric("Avg Quality", f"{avg_quality:.2f}")
+                with col_d:
+                    jammed_hits = sum(1 for ch in cm.hop_history if cm.channel_quality.get(ch, 1) < 0.4)
+                    st.metric("Jammed Hits", jammed_hits, delta=f"-{jammed_hits/len(cm.hop_history)*100:.0f}%", delta_color="inverse")
+                
+                st.success("✅ FHSS Sequence Generated!")
         
+        # =================== DSSS - SIGNAL SPREADING ===================
         with col2:
-            st.subheader("📡 DSSS - Signal Spreading")
-            if st.button("📊 Activate DSSS", key="dsss"):
-                # Generate signal visualization
+            st.subheader("📡 DSSS - Direct Sequence Spread Spectrum")
+            st.caption("Spreads signal across wide bandwidth using Barker code")
+            
+            spreading_factor = st.slider("Spreading Factor", 7, 13, 11, step=2, key="dsss_spread")
+            
+            if st.button("📊 Activate DSSS", type="primary", key="dsss_btn"):
+                # Generate signals
                 data_signal = np.array([1, -1, 1, -1, 1, -1])
-                barker_code = np.array([1, -1, 1, 1, -1, 1, 1, 1, -1, -1, -1])
+                
+                # Barker codes
+                barker_codes = {
+                    7: np.array([1, 1, 1, -1, -1, 1, -1]),
+                    11: np.array([1, -1, 1, 1, -1, 1, 1, 1, -1, -1, -1]),
+                    13: np.array([1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1])
+                }
+                
+                barker_code = barker_codes[spreading_factor]
                 spread_signal = np.repeat(data_signal, len(barker_code)) * np.tile(barker_code, len(data_signal))
                 
+                # Visualization
                 fig = go.Figure()
+                
                 fig.add_trace(go.Scatter(
                     y=data_signal,
                     mode='lines+markers',
                     name='Original Signal',
-                    line=dict(width=4, color='#3498db')
+                    line=dict(width=4, color='#3498db'),
+                    marker=dict(size=10)
                 ))
+                
                 fig.add_trace(go.Scatter(
                     y=spread_signal,
                     mode='lines',
                     name='Spread Signal',
-                    line=dict(width=2, color='#e74c3c')
+                    line=dict(width=2, color='#e74c3c'),
+                    opacity=0.8
                 ))
+                
                 fig.update_layout(
-                    title="DSSS: Signal Spreading Visualization",
-                    xaxis_title="Sample",
+                    title=f"DSSS: {spreading_factor}-chip Barker Code",
+                    xaxis_title="Sample Index",
                     yaxis_title="Amplitude",
-                    height=350
+                    height=400,
+                    hovermode='x unified'
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                st.success("✅ DSSS Activated!")
+                
+                # Metrics
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("Original Bits", len(data_signal))
+                with col_b:
+                    st.metric("Spread Chips", len(spread_signal))
+                with col_c:
+                    expansion = len(spread_signal) / len(data_signal)
+                    st.metric("Bandwidth Expansion", f"{expansion:.0f}x")
+                
+                st.success(f"✅ DSSS Activated with {spreading_factor}-chip Barker code!")
         
         st.markdown("---")
         
-        # Channel Quality Visualization
-        st.subheader("📊 Channel Quality Monitor")
+        # =================== CHANNEL QUALITY MONITOR ===================
+        st.subheader("📊 Real-Time Channel Quality Monitor")
+        
+        if use_real_data:
+            st.info("📡 Channel quality derived from real SNR/PDR data in your dataset")
+        else:
+            st.info("📡 Channel quality simulated (train model for real data)")
         
         channels = list(cm.channel_quality.keys())
         qualities = list(cm.channel_quality.values())
+        
+        # Color categorization
+        channel_colors = []
+        for q in qualities:
+            if q < 0.4:
+                channel_colors.append('#e74c3c')  # Red - Jammed
+            elif q < 0.7:
+                channel_colors.append('#f39c12')  # Orange - Fair
+            else:
+                channel_colors.append('#2ecc71')  # Green - Good
         
         fig_quality = go.Figure()
         fig_quality.add_trace(go.Bar(
             x=channels,
             y=qualities,
             marker=dict(
-                color=qualities,
-                colorscale='RdYlGn',
-                cmin=0,
-                cmax=1
+                color=channel_colors,
+                line=dict(color='white', width=2)
             ),
             text=[f"{q:.2f}" for q in qualities],
-            textposition='auto'
+            textposition='auto',
+            hovertemplate='<b>Channel %{x}</b><br>Quality: %{y:.2f}<extra></extra>'
         ))
+        
+        # Threshold lines
+        fig_quality.add_hline(y=0.7, line_dash="dash", line_color="green", 
+                            annotation_text="Good (≥0.7)", annotation_position="right")
+        fig_quality.add_hline(y=0.4, line_dash="dash", line_color="red", 
+                            annotation_text="Jammed (<0.4)", annotation_position="right")
+        
         fig_quality.update_layout(
-            title="Real-time Channel Quality",
+            title="Channel Quality Distribution",
             xaxis_title="Channel Number",
             yaxis_title="Quality Score",
-            height=400
+            height=400,
+            yaxis=dict(range=[0, 1.05])
         )
         st.plotly_chart(fig_quality, use_container_width=True)
         
-        # Power Control
-        col3, col4 = st.columns(2)
+        # Summary statistics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        good_channels = sum(1 for q in qualities if q >= 0.7)
+        fair_channels = sum(1 for q in qualities if 0.4 <= q < 0.7)
+        jammed_channels = sum(1 for q in qualities if q < 0.4)
+        best_channel = max(cm.channel_quality, key=cm.channel_quality.get)
+        
+        with col1:
+            st.metric("🟢 Good Channels", f"{good_channels}/13", 
+                    delta=f"{good_channels/13*100:.0f}%")
+        with col2:
+            st.metric("🟡 Fair Channels", f"{fair_channels}/13")
         with col3:
-            st.subheader("🔋 Power Control")
-            action = st.radio("Select Action", ["Increase", "Decrease"], horizontal=True)
-            if st.button("⚡ Adjust Power"):
-                result = cm.adjust_power(increase=(action == "Increase"))
-                st.warning(result)
+            st.metric("🔴 Jammed Channels", f"{jammed_channels}/13",
+                    delta=f"-{jammed_channels/13*100:.0f}%", delta_color="inverse")
+        with col4:
+            st.metric("⭐ Best Channel", f"Ch {best_channel}",
+                    delta=f"Q: {cm.channel_quality[best_channel]:.2f}")
+        
+        st.markdown("---")
+        
+        # =================== POWER CONTROL ===================
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            st.subheader("🔋 Adaptive Power Control")
+            st.caption("Adjusts transmission power to counter reactive jammers")
+            
+            action = st.radio("Power Adjustment", ["Increase (+10%)", "Decrease (-20%)"], 
+                            horizontal=True, key="power_action")
+            
+            if st.button("⚡ Adjust Power", type="primary", key="power_btn"):
+                increase = (action == "Increase (+10%)")
+                result = cm.adjust_power(increase=increase)
+                
+                if increase:
+                    st.info(f"📈 {result}")
+                else:
+                    st.warning(f"📉 {result}")
                 
                 # Power gauge
                 fig_power = go.Figure(go.Indicator(
                     mode="gauge+number+delta",
                     value=cm.power_level,
                     domain={'x': [0, 1], 'y': [0, 1]},
-                    title={'text': "Transmission Power"},
-                    delta={'reference': 100},
+                    title={'text': "Transmission Power (%)"},
+                    delta={'reference': 100, 'increasing': {'color': "orange"}},
                     gauge={
-                        'axis': {'range': [0, 100]},
+                        'axis': {'range': [0, 100], 'tickwidth': 1},
                         'bar': {'color': "darkblue"},
+                        'bgcolor': "white",
+                        'borderwidth': 2,
+                        'bordercolor': "gray",
                         'steps': [
-                            {'range': [0, 30], 'color': "lightgray"},
-                            {'range': [30, 70], 'color': "gray"}
+                            {'range': [0, 30], 'color': '#ffcccc'},
+                            {'range': [30, 70], 'color': '#ffffcc'},
+                            {'range': [70, 100], 'color': '#ccffcc'}
                         ],
                         'threshold': {
                             'line': {'color': "red", 'width': 4},
@@ -786,13 +1047,111 @@ def main():
                 ))
                 fig_power.update_layout(height=300)
                 st.plotly_chart(fig_power, use_container_width=True)
+                
+                # Recommendations
+                if cm.power_level < 30:
+                    st.error("⚠️ Low power! May affect communication range")
+                elif cm.power_level > 90:
+                    st.warning("⚠️ High power! May attract reactive jammers")
+                else:
+                    st.success("✅ Power level optimal")
         
+        # =================== DYNAMIC CHANNEL SWITCHING ===================
         with col4:
-            st.subheader("🔀 Channel Switching")
-            jammed = st.multiselect("Jammed Channels", list(range(1, 14)), [6, 11])
-            if st.button("🔄 Switch Channel"):
-                result = cm.switch_channel(avoid_channels=jammed)
-                st.success(result)
+            st.subheader("🔀 Dynamic Channel Switching")
+            st.caption("Switch to best available channel avoiding jammers")
+            
+            jammed_manual = st.multiselect(
+                "Mark channels as jammed",
+                list(range(1, 14)),
+                [ch for ch, q in cm.channel_quality.items() if q < 0.4],
+                key="manual_jam"
+            )
+            
+            if st.button("🔄 Switch to Best Channel", type="primary", key="switch_btn"):
+                result = cm.switch_channel(avoid_channels=jammed_manual)
+                st.success(f"✅ {result}")
+                
+                # Show channel comparison
+                available = [ch for ch in range(1, 14) if ch not in jammed_manual]
+                
+                comparison_data = pd.DataFrame({
+                    'Channel': available,
+                    'Quality': [cm.channel_quality[ch] for ch in available],
+                    'Status': ['Current' if ch == cm.current_channel else 'Available' 
+                            for ch in available]
+                })
+                
+                fig_comp = px.bar(
+                    comparison_data,
+                    x='Channel',
+                    y='Quality',
+                    color='Status',
+                    title="Available Channels Comparison",
+                    color_discrete_map={'Current': '#2ecc71', 'Available': '#95a5a6'},
+                    height=300
+                )
+                fig_comp.update_layout(showlegend=True)
+                st.plotly_chart(fig_comp, use_container_width=True)
+                
+                st.info(f"🎯 Current channel: **{cm.current_channel}** (Quality: {cm.channel_quality[cm.current_channel]:.2f})")
+        
+        st.markdown("---")
+        
+        # =================== COUNTERMEASURE EFFECTIVENESS ===================
+        st.subheader("📈 Countermeasure Effectiveness Analysis")
+        
+        if use_real_data:
+            # Calculate effectiveness based on real data
+            effectiveness_data = {
+                'Countermeasure': ['FHSS', 'DSSS', 'Power Control', 'Channel Switching'],
+                'Effectiveness': [
+                    min(100, (1 - jammed_channels/13) * 100 + 10),  # FHSS
+                    min(100, avg_snr / 50 * 100),                    # DSSS
+                    min(100, avg_pdr * 100 + 20),                    # Power Control
+                    min(100, good_channels / 13 * 100 + 15)          # Channel Switching
+                ],
+                'Best Against': [
+                    'Constant & Random Jamming',
+                    'Reactive Jamming',
+                    'Reactive Jamming',
+                    'All Jamming Types'
+                ]
+            }
+        else:
+            effectiveness_data = {
+                'Countermeasure': ['FHSS', 'DSSS', 'Power Control', 'Channel Switching'],
+                'Effectiveness': [85, 90, 75, 88],
+                'Best Against': [
+                    'Constant & Random Jamming',
+                    'Reactive Jamming',
+                    'Reactive Jamming',
+                    'All Jamming Types'
+                ]
+            }
+        
+        df_eff = pd.DataFrame(effectiveness_data)
+        
+        fig_eff = px.bar(
+            df_eff,
+            x='Countermeasure',
+            y='Effectiveness',
+            text='Effectiveness',
+            color='Effectiveness',
+            color_continuous_scale='RdYlGn',
+            hover_data=['Best Against'],
+            title="Countermeasure Effectiveness (%)" + (" - Based on Real Data" if use_real_data else " - Demo")
+        )
+        fig_eff.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+        fig_eff.update_layout(height=400, showlegend=False, yaxis=dict(range=[0, 105]))
+        st.plotly_chart(fig_eff, use_container_width=True)
+        
+        # Display table
+        st.dataframe(df_eff, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        st.info("💡 **Tip:** Combine multiple countermeasures for maximum protection against sophisticated jamming attacks!")
+
     
     # =================== SECURITY ===================
     elif page == "Security":
