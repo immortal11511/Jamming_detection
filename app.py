@@ -1088,7 +1088,7 @@ def main():
                 progress_bar.progress((i+1)/num_samples)
                 time.sleep(0.7)
             
-            st.balloons()
+            # st.balloons()
             st.success("🎉 Simulation Complete!")
             
             # Final statistics
