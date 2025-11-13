@@ -415,9 +415,9 @@ def main():
     st.sidebar.title("🛡️ Control Panel")
     page = st.sidebar.selectbox(
         "Navigation",
-        ["🏠 Dashboard", "📊 ML Training", "🛡️ Countermeasures", 
-         "🔒 Security", "🛤️ Multi-Path Routing", 
-         "🚨 IDS Monitor", "📈 Live Simulation", "📚 Docs"]
+        ["Dashboard", "ML Training", "Countermeasures", 
+         "Security", "Multi-Path Routing", 
+         "IDS Monitor", "Live Simulation", "Docs"]
     )
     
     if 'pipeline' not in st.session_state:
@@ -426,7 +426,7 @@ def main():
         st.session_state.detection_log = []
     
     # =================== DASHBOARD ===================
-    if page == "🏠 Dashboard":
+    if page == "Dashboard":
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -477,12 +477,12 @@ def main():
         st.plotly_chart(fig2, use_container_width=True)
     
     # =================== ML TRAINING ===================
-    elif page == "📊 ML Training":
+    elif page == "ML Training":
         st.header("📊 Machine Learning Detection System")
         
         folder_path = st.text_input("Dataset Path", "data")
         
-        if st.button("🚀 Train Model", type="primary"):
+        if st.button("Train Model", type="primary"):
             with st.spinner("Training model..."):
                 try:
                     pipeline = JamShieldPipeline()
@@ -566,7 +566,7 @@ def main():
                     st.error(f"Error: {str(e)}")
     
     # =================== COUNTERMEASURES ===================
-    elif page == "🛡️ Countermeasures":
+    elif page == "Countermeasures":
         st.header("🛡️ Interactive Countermeasures")
         
         cm = QuickCountermeasures()
@@ -698,7 +698,7 @@ def main():
                 st.success(result)
     
     # =================== SECURITY ===================
-    elif page == "🔒 Security":
+    elif page == "Security":
         st.header("🔒 Advanced Security Layer")
         
         enc = AdvancedEncryption()
@@ -793,7 +793,7 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
     
     # =================== MULTI-PATH ROUTING ===================
-    elif page == "🛤️ Multi-Path Routing":
+    elif page == "Multi-Path Routing":
         st.header("🛤️ Interactive Multi-Path Routing")
         
         router = MultiPathRouter()
@@ -892,7 +892,7 @@ def main():
         st.plotly_chart(fig_perf, use_container_width=True)
     
     # =================== IDS MONITOR ===================
-    elif page == "🚨 IDS Monitor":
+    elif page == "IDS Monitor":
         st.header("🚨 Lightweight Intrusion Detection System")
         
         ids = LightweightIDS()
@@ -998,7 +998,7 @@ def main():
             st.plotly_chart(fig_score, use_container_width=True)
     
     # =================== LIVE SIMULATION ===================
-    elif page == "📈 Live Simulation":
+    elif page == "Live Simulation":
         st.header("📈 Complete System Live Simulation")
         
         if not st.session_state.trained:
