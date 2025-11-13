@@ -480,7 +480,7 @@ def main():
     elif page == "📊 ML Training":
         st.header("📊 Machine Learning Detection System")
         
-        folder_path = st.text_input("Dataset Path", "D:\\Network and Wireless Security\\Project\\data")
+        folder_path = st.text_input("Dataset Path", "data")
         
         if st.button("🚀 Train Model", type="primary"):
             with st.spinner("Training model..."):
